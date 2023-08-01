@@ -1,0 +1,359 @@
+\documentclass[12pt]{article}
+\usepackage[utf8]{inputenc}
+\usepackage{graphics}
+\usepackage{epsfig}
+\usepackage{times}
+\usepackage{graphicx}
+\usepackage{comment}
+\usepackage{hyperref}
+\usepackage[utf8]{inputenc}
+\usepackage{geometry}
+\usepackage{pdflscape}
+
+\usepackage[parfill]{parskip}
+\usepackage{listings}
+\usepackage[usenames,dvipsnames]{color}
+
+\lstset{language=R,
+    basicstyle=\small\ttfamily,
+    stringstyle=\color{DarkGreen},
+    otherkeywords={0,1,2,3,4,5,6,7,8,9},
+    morekeywords={TRUE,FALSE},
+    deletekeywords={data,frame,length,as,character},
+    keywordstyle=\color{blue},
+    commentstyle=\color{green},
+}
+
+\usepackage[english]{babel}
+\usepackage{amsthm, amsmath, amssymb}
+\usepackage{float}
+\usepackage{graphicx}
+
+\geometry{margin=1in}
+
+\begin{document}
+
+\clearpage \newpage
+\section*{Introduction}
+Like other businesses, banks exist to make a profit. They do this by holding your
+money and lending it out to earn interest on. Therefore, they need to recruit 
+customers to bank with them via marketing techniques. Marketing can be an  effective tool for adoption of a product or service, but it costs money. Having an idea of a type of customer to pursue can be more cost effective depending on the form of outreach. The purpose of our project is to determine if we can 
+effectively predict whether a customer will choose to keep their money in a bank
+account based on a variety of demographic factors and campaign-related factors. 
+Our dataset is based on a Portuguese bank, but it is likely that a similar strategy could be employed at other commercial lending institutions.
+
+We implement a selection of machine learing strategies we learned throughout the course. Specifically, we create a logistic LASSO model, a decision tree, a random forest, a boosted tree model, and a neural net. We use AUC under ROC (Receiver Operator Curve) and PR (Precision-Recall) curves to evaluate the performance of different machine learning models due to imbalanced classes in our response variable.
+
+Random forests performed the best in terms of AUCROC and AUCPR (Area under the curve of the Receiver Operator curve and the Precision-Recall curve). We chose to avoid vanilla accuracy as a metric because of the imbalance between the number of people creating term deposits in the sample. This was about a 90/10 split in favor of no term deposit.
+
+\section*{Data Description}
+We have a dataset with 41188 client observations from a direct marketing campaign
+run by a Portuguese bank. The data was taken from the UCI Repository and was donated by Moro et. al. \cite{moro2014data}. The purpose of the campaign was to get people to 
+make term deposits. A term deposit is when you deposit money into 
+an account for a fixed period of time. The bank guarantees you a return and may
+or may not let you withdraw with a penalty. \cite{investopedia}
+
+Broadly, we fit the 20 variables into a few groups. We have 
+\begin{itemize}
+    \item Demographic variables (age, job, marital status, education) 
+    \item Previous banking variables (default on any debt, has housing loan, has personal loan)
+    \item Macroeconomic variables (quarterly employment variation rate, monthly Consumer Price Index, monthly Consumer Confidence Index, daily Euribor interest rate, and quarterly unemployment)
+    \item Survey/Campaign related variables (contact method, last month contacted, last day of week contacted, duration of last contact, number of times client contacted, days since client contacted in previous campaign, total contacts from previous campaigns, outcome from previous campaign if applicable)
+\end{itemize}
+
+See Table \ref{table:data_dict} in Appendix A for definitions. 
+
+\subsection*{Data Processing}
+The dataset was fairly clean to start with. We first converted the dependent variable into a 0/1 factor variable. We also converted character vectors into factors as well as anything else that made sense to be a factor based on number of unique values. 
+
+Then we had to deal with factor levels with few observations. 
+\begin{itemize}
+    \item The default variable only had 3 people listed as having defaulted for sure. We combine these with the "unknown" category to represent people who either have bad credit history or their credit history is unknown and could be bad. 
+
+    \item The "previous" variable had few observations in categories that were not "0", "1", or "2" so we made new bins for 0, 1, and 2 or more contacts before this campaign. 
+
+    \item For marital status, we had 80 "unknown" observations which we decided to combine with "single". 
+
+    \item For education, we had 18 "illiterate" observations. We drop these since none of the other categories made much sense to combine with. 
+    
+    \item Finally, we drop the variable duration on the advice of the dataset creators since it is almost a perfect predictor of creating a term deposit. 
+    
+    \item We also drop pdays. Almost 97\% of the observations are listed as having no previous contact, and it did not make sense to impute this variables. So, we drop it and use "previous" as a proxy for intensity of previous targeting where again the categories are no previous contact, one contact, or two or more contacts. 
+\end{itemize}
+Our final dataset has 18 predictors and 41170 observations.
+
+\subsection*{Summary Statistics}
+\subsubsection*{Imbalanced classes}
+The first thing that should be noted about this dataset is that the proportion of people who did create a term deposit is much lower than those who did not. We see in Table \ref{dependent_balance} that breakdown is approximately 11\% success in getting to make term deposits and 89\% failures. This is an important consideration for the way we evaluate our model prediction results later on. Any predictive model with a huge class imbalance can achieve a high accuracy just by predicting the majority class.
+
+\begin{table}[h]
+\centering
+   \begin{tabular}{|c|c|}
+    \hline
+    Yes & No \\
+    \hline
+    0.113 & 0.887 \\
+    \hline
+\end{tabular}
+\caption{Proportion of people who did or did not open a term deposit account \label{dependent_balance}}
+\end{table}
+
+\subsubsection*{Distributions}
+Figure \ref{histograms} gives the distribution of our numeric variables. 
+
+We see from the histograms that some of numeric variables are skewed. We decided to keep the macroeconomic variables untouched. We did take the log of age. The resulting skewness was slightly more ideal, given by figure \ref{Normalized 'age'} below.
+ 
+\begin{figure}[ht]
+    \centering
+    \includegraphics[scale = 0.64]{figures/histograms_numvars_7.png}
+    \caption{Histograms of numeric variables (raw)}
+    \label{histograms}
+\end{figure}
+
+
+\begin{figure}[ht]
+    \centering
+    \includegraphics[scale = 0.35]{figures/age_normal.png}
+    \caption{Normalized 'age' variable histogram}
+    \label{Normalized 'age'}
+\end{figure}
+
+For 'campaign', we originally were going to treat it as numeric due to the large number of unique values. Unfortunately, everything past 5 contacts had extremely low counts. To deal with the skew, we ended up converting campaign to a factor and creating categories of "1", "2", "3", "4", and "5 or more" contacts. The max number of contacts got up into the multiple dozens and not doing this may have caused some outlier issues.
+
+\subsubsection*{Term deposit by category}
+Tables \ref{job_td} and \ref{educ_td} give a breakdown of term deposit frequency for some selected categories.
+
+We were surprised to see the breakdown by job. Students had the highest frequency. Perhaps students are younger and more financially savvy. We do not have any data on the size of the deposit, but we would expect the amount deposited to be lower. Retired people may create term deposits as a safe investment late in their life. We do not have great intuition for other categories like unemployed and admin. Note that the lowest percentage for job was 7\% for blue-collar workers.
+
+\begin{table}[h]
+\centering
+   \begin{tabular}{|c|c|c|}
+    \hline
+    Job & N & \% Term Deposit \\
+    \hline
+    student & 875 & 0.314 \\
+    \hline
+    retired & 1717 & 0.252 \\
+    \hline
+    unemployed & 1014 & 0.142 \\
+    \hline
+    admin. & 10421 & 0.13 \\
+    \hline
+\end{tabular}
+\caption{Selected proportions of people with term deposit by job \label{job_td}}
+\end{table}
+
+The breakdown for education level made a lot more sense. We see that there is an inverse relationship between level of education attained and percentage of term deposits. The theory for this would be that more educated people are both more financially savvy and have higher paying jobs with more money to invest in instruments like term deposits.
+
+\begin{table}[h]
+\centering
+   \begin{tabular}{|c|c|c|}
+    \hline
+    Education Level & N & \% Term Deposit \\
+    \hline
+    university degree & 12168 & 0.137 \\
+    \hline
+    high school & 9515 & 0.108 \\
+    \hline
+    basic 9y & 6045 & 0.0782 \\
+    \hline
+\end{tabular}
+\caption{Selected proportions of people with term deposit by education \label{educ_td}}
+\end{table}
+
+\section*{Analysis}
+We decided to use a variety of models to highlight their strengths and weaknesses. Even though we focused on prediction, we started with a logistic LASSO in case we wanted to look at the coefficient estimates as well. Since we did not implement group LASSO at this time, the interpretation of the coefficients is a bit confusing (Appendix B). However, the other models we use would make it even harder to demonstrate why each prediction was made since they are more black box. For example, random forest uses an aggregation of trees with random selections of variables. There is no easy way to provide a visualization of this.
+
+We follow up with random forest, boosted trees, and neural nets. 
+To evaluate our models, we considered using the AUC of the ROC. Simple accuracy was not going to cut it due to the imbalanced nature of our data. Imbalanced data makes getting high accuracy in prediction very easy. As an extreme example, say 80 observations are negative and 20 are positive. If you were to say, classify all 80 negatives correctly and 10 positives correctly, then your vanilla accuracy is 90\%. But if you are looking for a disease, your true positive rate was 50\% which is really bad. The ROC has nothing to do with class proportions or cost/benefits since you are plotting true positive and false positive rates. So, you can make a statement about the general conditions your model may be used in such as a new population where the class proportions may be different. 
+
+It turns out that even the AUC of the ROC can even be misleading with imbalanced classes \cite{ml_master}. Depending on how our models separate out positive and negative cases, we can get a high AUC of the ROC while still getting many false positives at a variety of thresholds.
+
+One alternative is to use a Precision-Recall curve. A PR curve plots the precision against recall where precision is defined as 
+$$\frac{TP}{TP + FP}$$
+and recall is the true positive rate
+$$\frac{TP}{TP + FN}$$
+This puts the focus on minimizing false positives rather than false negatives. This makes sense for the context of targeted marketing. Since marketing costs time and money, you can save both by only targeting people who are likely to say yes. This would be different than a disease test where false positives are not necessarily a huge problem relative to false negatives e.g. a false negative for COVID-19 might cause someone to go out and spread the virus. The area under the PR curve allows us to compare model performance similar to the AUC of the ROC. In fact, they end ranking models similarly. 
+
+\subsection*{Tuning}
+We split our data into 70\% training, 15\% validation, and 15\% testing. Then, we tuned our models using the validation set before training on the union of the training and validation sets and evaluating performance on the test set. The list below has the optimal parameters we found for each model type. Note, we actually used cross-validation for the logistic LASSO because it was already built in.
+
+\begin{itemize}
+    \item Logistic Lasso: $\lambda = 0.004$
+    \item Random Forest: Variable Selection = 5, Node Size = 50, Max Tree Depth = 10
+    \item Boosting: Shrinkage = 0.3, Interaction Depth = 5, Node Size = 10, Subsample Fraction = 0.5
+    \item Neural Net: 2 hidden layers, 32 nodes in 1st layer, 8 nodes in 2nd layer, Learning Rate = 0.01
+\end{itemize}
+
+\subsection*{Feature Importance}
+After training on the combined training set, we thought it might be interesting to look at the way our models ranked features. We will look at importance rankings from our random forest and boosted tree models.
+
+\clearpage \newpage
+\begin{figure}[ht!]
+    \centering
+    \includegraphics[scale = 0.5]{figures/xgb_var_imp.png}
+    \caption{Boosting variable importance}
+    \label{xgb_var_imp}
+\end{figure}
+
+\begin{figure}[ht!]
+    \centering
+    \includegraphics[scale = 0.5]{figures/rf_var_imp.png}
+    \caption{Random forest variable importance}
+    \label{rf_var_imp}
+\end{figure}
+
+We see that random forests and XGBoost ranked many variables similarly but also had disparities. Age and macrovariables seemed to matter a lot in the decision making by the algorithms. This should be noted for targeting purposes later on.
+
+\clearpage\newpage
+\subsection*{Final Model Comparisons}
+We evaluate AUC under the ROC and AUC under the PR curve and show the ROC, PR, and lift curves for all models. 
+
+Random forest has the highest AUC in both cases (0.471 for PR and 0.797 for ROC). Note that the max AUCPR is 1 and 0.471 appears low. However, for this type of curve, the baseline precision value is the percentage that the positive class occurs in the data (about 0.113). So, 0.471 is a big improvement and we have decision thresholds where the precision is in the 70s and 80s percentages. The sensitivity for all models was poor despite high accuracy. We missed a lot of potential term deposits. Deviance and G-Mean we calculated just for completeness. The deviance favors random forest while the G-mean (product of sensitivity and specificity) favors the logistic model.
+
+\begin{table}[h]
+\centering
+\resizebox{0.6\textwidth}{!}{%
+   \begin{tabular}{|c|c|c|c|c|}
+    \hline
+    Model      & Accuracy & Sensitivity & Deviance & G-Mean \\
+    \hline
+    Logistic &  0.8972 & 0.1842 & 3472.513 & 0.426  \\
+    \hline
+    RF       &  0.9007 & 0.2547 & 3345.966 & 0.500  \\
+    \hline
+    Boosting &  0.8917 & 0.2964 & 4027.619 & 0.5354129 \\
+    \hline
+    NN &  0.8965 & 0.2302 & 3457.121 & 0.475233\\
+    \hline
+\end{tabular}}
+\caption{Accuracy and sensitivity by model}
+\end{table}
+
+\begin{table}[h]
+\centering
+\resizebox{0.2\textwidth}{!}{%
+   \begin{tabular}{|c|c|}
+    \hline
+    Model      & AUCPR \\
+    \hline
+    Logistic &  0.441  \\
+    \hline
+    RF       &  0.471  \\
+    \hline
+    Boosting &  0.409 \\
+    \hline
+    NN &  0.445 \\
+    \hline
+\end{tabular}}
+\caption{AUC of the Precision-Recall curve}
+\end{table}
+
+\begin{table}[h]
+\centering
+\resizebox{0.2\textwidth}{!}{%
+   \begin{tabular}{|c|c|}
+    \hline
+    Model      & AUC ROC \\
+    \hline
+    Logistic &  0.786  \\
+    \hline
+    RF       &  0.797  \\
+    \hline
+    Boosting &  0.756 \\
+    \hline
+    NN &  0.788 \\
+    \hline
+\end{tabular}}
+\caption{AUC of the ROC}
+\end{table}
+
+\clearpage \newpage
+\begin{figure}[ht!]
+    \centering
+    \includegraphics[scale = 0.48]{figures/diagnostic_plots.PNG}
+    \caption{ROC and PR curve}
+    \label{diagnostic_plots}
+\end{figure}
+
+\begin{figure}[ht!]
+    \centering
+    \includegraphics[scale = 0.48]{figures/Lift.png}
+    \caption{Lift curve}
+    \label{lift_curve}
+\end{figure}
+
+\section*{Conclusion and Future Directions}
+Our analysis showed that random forests generated the best predictions judged by the AUC of ROC and PR curves, outperforming XGBoost and Neural Networks. This in a way indicates that when solving prediction problems with high levels of class imbalance, it may be worthwhile to consider methods that are less computationally expensive instead of jumping into using boosted models or Neural Nets. This could potentially save banks time and money when aiming to bring in profit from correctly predicting which customers would make term deposits and maximize revenue.
+
+Finally, seeing from our variable importance plots, banks should consider the Euribor 3-month metric, consumer confidence index, consumer price index, employment variation rate, and customers' age to predict whether or not a consumer would make term deposits. As age is an important feature in predicting term deposits, banks should make an effort to reach out to older customers rather than younger ones if they want to encourage savings. Since the Euribor 3-month metric, consumer confidence index, employment variation rate, and consumer price index are all macroeconomic variables, banks should also closely observe the economic environment of their country and decide when to make an effort to reach out to potential depositors. However, since machine learning models only capture what information the data at hand possess, banking institutions should combine these results with their domain knowledge when coming up with their marketing strategies. 
+
+\clearpage \newpage
+\nocite{James2013}
+\bibliographystyle{plain}
+\bibliography{references.bib}
+
+\clearpage \newpage
+\section*{Appendix A: Data Dictionary}
+\begin{table}[h]
+\caption{Data Dictionary \label{table:data_dict}}
+\centering
+   \begin{tabular}{|c|c|c|}
+    \hline
+    Variable & Definition & Type\\
+    \hline
+    age & respondent's age & numeric \\
+    \hline
+    job & job type & categorical\\
+    \hline
+    marital & marital status & categorical\\
+    \hline
+    education & level of degree & categorical\\
+    \hline
+    default & has credit in default or not & categorical\\
+    \hline
+    housing & has housing loan or not & categorical\\
+    \hline
+    loan & has personal loan or not & categorical\\
+    \hline
+    contact & contact communication type & categorical\\
+    \hline
+    month & last contact month of year & categorical\\
+    \hline
+    day\_of\_week & last contact day of the week & categorical\\
+    \hline
+    duration & last contact duration, in seconds &numeric\\
+    \hline
+    campaign & number of contacts performed during this campaign for this client&categorical\\
+    \hline
+    pdays & number of days after client was contacted from a previous campaign&numeric\\
+    \hline
+    previous&number of contacts performed before this campaign&categorical\\
+    \hline
+    poutcome&outcome of the previous marketing campaign&categorical\\
+    \hline
+    emp.var.rate&employment variation rate - quarterly indicator&numeric\\
+    \hline
+    cons.price.idx & consumer price index - monthly indicator & numeric\\
+    \hline
+    cons.conf.idx & consumer confidence index - monthly indicator & numeric\\
+    \hline
+    euribor3m & euribor 3 month rate - daily indicator & numeric\\
+    \hline
+    nr.employed & number of employees - quarterly indicator & numeric\\
+    \hline
+    y & target variable, has the client subscribed a term deposit? & categorical\\
+    \hline
+\end{tabular}
+\end{table}
+
+\clearpage \newpage
+\section*{Appendix B: Logistic LASSO Results}
+
+\begin{figure}[ht!]
+    \centering
+    \includegraphics[scale = 1]{figures/lasso_reg_output.PNG}
+    \label{lasso_reg}
+\end{figure}
+
+\end{document}
